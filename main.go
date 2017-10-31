@@ -1,16 +1,28 @@
 package main
 
 import (
-	"encoding/csv"
+	"encoding/json"
 	"fmt"
-	"io"
-	"log"
+	"io/ioutil"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
-	trumail "github.com/sdwolfe32/trumail/verifier"
+	"github.com/tealeg/xlsx"
 )
+
+type Email struct {
+	Address     string `json:"address"`
+	Username    string `json:"username"`
+	Domain      string `json:"domain"`
+	HostExists  bool   `json:"hostExists"`
+	Deliverable bool   `json:"deliverable"`
+	FullInbox   bool   `json:"fullInbox"`
+	CatchAll    bool   `json:"catchAll"`
+	Disposable  bool   `json:"disposable"`
+	Gravatar    bool   `json:"gravatar"`
+}
 
 func main() {
 	port := "3001"
@@ -25,34 +37,37 @@ func main() {
 
 // CreateProduct add product
 func readSheet(c *gin.Context) {
-	file, error := os.Open("emails.csv")
-	if error != nil {
-		fmt.Println("Error:", error)
-		return
-	}
-	defer file.Close()
 
-	reader := csv.NewReader(file)
-	reader.Comma = ';'
-	lineCount := 0
-	for {
-		record, error := reader.Read()
-		if error == io.EOF {
-			break
-		} else if error != nil {
-			fmt.Println("Error:", error)
-			return
+	excelFileName := "emails.xlsx"
+	xlFile, err := xlsx.OpenFile(excelFileName)
+	if err != nil {
+		fmt.Printf(err.Error())
+	}
+	for _, sheet := range xlFile.Sheets {
+		for _, row := range sheet.Rows {
+			for _, cell := range row.Cells {
+				text := cell.String()
+				url := "https://trumail.io/json/" + strings.TrimSpace(strings.Replace(text, " ", "", -1))
+				response, err := http.Get(url)
+				if err != nil {
+					fmt.Printf("%s", err)
+					os.Exit(1)
+				} else {
+					defer response.Body.Close()
+					contents, err := ioutil.ReadAll(response.Body)
+					if err != nil {
+						fmt.Printf("%s", err)
+						os.Exit(1)
+					}
+					var email Email
+					bodyString := string(contents)
+					fmt.Println(bodyString)
+					json.Unmarshal(contents, &email)
+					if !email.Deliverable {
+						fmt.Println(email.Address)
+					}
+				}
+			}
 		}
-		// record is an array of string so is directly printable
-		//fmt.Println("Record", lineCount, "is", record, "and has", len(record), "fields")
-		// and we can iterate on top of that
-		v := trumail.NewVerifier(20, "gmail.com", "engenheiroecp@gmail.com")
-		for i := 0; i < len(record); i++ {
-			fmt.Println(" ", record[i])
-			res := v.Verify(record[i])
-			log.Println(*res[0])
-		}
-		fmt.Println()
-		lineCount++
 	}
 }
